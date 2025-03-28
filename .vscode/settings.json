@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "stdio.h": "c",
+        "esp_lcd_ili9341.h": "c"
+    }
+}
