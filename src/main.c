@@ -24,7 +24,6 @@
 
 
 static uint16_t* windowBuffer;
-static uint8_t* decomp;
 spi_bus_config_t* global_buscfg;
 
 
@@ -61,13 +60,10 @@ IRAM_ATTR static bool notify_refresh_ready(esp_lcd_panel_io_handle_t panel_io, e
 }
 
 
-static void draw_bitmap(esp_lcd_panel_handle_t panel_handle, const uint16_t* color_data) {
+static void draw_map(esp_lcd_panel_handle_t panel_handle, const uint16_t* color_data) {
     refresh_finish = xSemaphoreCreateBinary();
-    ESP_LOGI(TAG, "BEFORE");
     TEST_ASSERT_NOT_NULL(refresh_finish);
-    ESP_LOGI(TAG, "BEFORE");
-    esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 240, 240, color_data);
-    ESP_LOGI(TAG, "BEFORE");
+    esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, MAP_WIDTH, MAP_HEIGHT, color_data);
     xSemaphoreTake(refresh_finish, portMAX_DELAY);
     vSemaphoreDelete(refresh_finish);
 }
@@ -199,64 +195,16 @@ void lstdir(char* path) {
 void app_main(void)
 {
     printf("Hello world!\n");
-    windowBuffer = (uint16_t*)malloc(240 * 240 * 2);
+    windowBuffer = (uint16_t*)malloc(MAP_HEIGHT * MAP_WIDTH * 2);
     if (!windowBuffer) {
-        ESP_LOGI("example", "Mbl O6ocpaJlucb");
+        ESP_LOGI("main", "FAILED MEMORY ALLOCATION FOR WINDOW BUFFER");
     }
     esp_ili9341* device = ili9341_init_spi();
     sdmmc_card_t* card = init_sd();
 
+    UpdateWindowBuffer(windowBuffer, 59.971485, 30.323116, 15, "/card/cmptls/", ".gz", colorPalette);
+    draw_map(device->panel_handle, windowBuffer);
 
-    unsigned long size = 0;
-    unsigned char* data = 0;
-    FILE* fp = fopen("/card/cmptls/11/1196/596.GZ", "rb");
-    if (!fp) {
-        ESP_LOGE("example", "FAILED TO LOAD FILE");
-    }
-    else {
-        ESP_LOGI("example", "SUCCESS");
-    }
-    fseek(fp, 0, SEEK_END);
-    size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    data = calloc(size, 1);
-    fread(data, 1, size, fp);
-    fclose(fp);
-    printf("SIZE: %d\n", (int)size);
-
-
-    decomp = (uint8_t*)malloc(65536);
-    if (!decomp) {
-        ESP_LOGI("example", "Mbl O6ocpaJlucb");
-    }
-    unsigned long len = 65536;
-
-    int status = puff(decomp, &len, data + 10, &size);
-    printf("SIZE N: %d\n", (int)len);
-    free(data);
-
-    int n = 0;
-    for (int i = 0; i < 240; i++) {
-        for (int j = 255; j >= 0; j--) {
-            if (j < 240) {
-                windowBuffer[n] = colorPalette[decomp[i * 256 + j]];
-                // change endianess (to be deleted after editing lookup table)
-                windowBuffer[n] = ((windowBuffer[n] & 0xFF) << 8) | (windowBuffer[n] >> 8);
-                if (i == 0 && j == 0) printf("\n%d\n", (int)windowBuffer[n]);
-                n++;
-            }
-        }
-    }
-    free(decomp);
-    ESP_LOGI(TAG, "BEFORE");
-    draw_bitmap(device->panel_handle, windowBuffer);
-    ESP_LOGI(TAG, "AFTER");
-    // unsigned char* c = decomp;
-
-    // for (int i = 0; i < 110; i++) {
-    //     printf("%d ", c[i]);
-    // }
-    printf("\nStatus: %d\n", status);
     esp_vfs_fat_sdcard_unmount("/card", card);
     ili9341_deinit(device->panel_handle, device->panel_io);
     printf("Restarting now.\n");

@@ -12,6 +12,13 @@ extern "C" {
 #define M_PI 3.141593
 #endif
 
+#define MAP_HEIGHT 240
+#define MAP_WIDTH 240
+#define TILE_WIDTH 256
+#define TILE_HEIGHT 256
+#define MIN_ZOOM 10
+#define MAX_ZOOM 16
+
 
 typedef struct vec2 {
     float x;
@@ -32,6 +39,12 @@ u16vec2 deg2pointOnMap(vec2 tile, uint32_t zoom, uint16_t tile_resolition);
 
 
 uint8_t* getFileContent(const char* filePath);
+
+
+void UpdateWindowBuffer(uint16_t* buffer, float lat, float lon, uint32_t zoom, char* tilesRootDir, char* imageFileExtesion, const uint16_t* colorPalette);
+
+
+char* getFileName(float lat, float lon, uint32_t zoom, char* tilesRootDir, char* imageFileExtesion);
 
 
 #ifdef __cplusplus
