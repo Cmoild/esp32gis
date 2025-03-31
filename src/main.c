@@ -202,7 +202,7 @@ void app_main(void)
     esp_ili9341* device = ili9341_init_spi();
     sdmmc_card_t* card = init_sd();
 
-    UpdateWindowBuffer(windowBuffer, 59.971485, 30.323116, 15, "/card/cmptls/", ".gz", colorPalette);
+    UpdateWindowBuffer(windowBuffer, 59.938279, 30.314198, 14, "/card/cmptls/", ".gz", colorPalette);
     draw_map(device->panel_handle, windowBuffer);
 
     esp_vfs_fat_sdcard_unmount("/card", card);

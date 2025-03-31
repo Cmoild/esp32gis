@@ -14,6 +14,8 @@ extern "C" {
 
 #define MAP_HEIGHT 240
 #define MAP_WIDTH 240
+#define MAP_CENTER_X (MAP_WIDTH / 2)
+#define MAP_CENTER_Y (MAP_HEIGHT / 2)
 #define TILE_WIDTH 256
 #define TILE_HEIGHT 256
 #define MIN_ZOOM 10
@@ -30,6 +32,12 @@ typedef struct u16vec2 {
     uint16_t x;
     uint16_t y;
 } u16vec2;
+
+
+typedef struct ivec2 {
+    int x;
+    int y;
+} ivec2;
 
 
 vec2 deg2float(vec2 coords, uint32_t zoom);
