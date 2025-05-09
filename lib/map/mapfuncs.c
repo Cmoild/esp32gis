@@ -15,6 +15,17 @@ vec2 deg2float(vec2 coords, uint32_t zoom) {
 }
 
 
+// Returns vec2, where x - lon, y - lat
+vec2 float2deg(vec2 coords, uint32_t zoom) {
+    uint32_t n = (1 << zoom);
+    vec2 ret = {
+        .x = coords.x / (float)n * 360.f - 180.f,
+        .y = (atan(sinh(M_PI * (1.f - 2.f * coords.y / (float)n)))) * 180.f / M_PI
+    };
+    return ret;
+}
+
+
 u16vec2 deg2pointOnMap(vec2 tile, uint32_t zoom, uint16_t tile_resolution) {
     u16vec2 ret;
     ret.x = (uint16_t)((tile.x - floorf(tile.x)) * (float)tile_resolution);
@@ -54,7 +65,7 @@ uint8_t* getFileContent(const char* filePath) {
 
     uint8_t* decomp = (uint8_t*)malloc(65536);
     if (!decomp) {
-        ESP_LOGE("map", "FAILED TO ALLOCATE MEMORY FOR STORING FILE DECOMPRESSED CONTENT");
+        ESP_LOGE("map", "FAILED TO ALLOCATE MEMORY FOR STORING FILE UNCOMPRESSED CONTENT");
         return NULL;
     }
 
@@ -63,7 +74,7 @@ uint8_t* getFileContent(const char* filePath) {
     free(data);
     if (status != 0) {
         free(decomp);
-        ESP_LOGE("map", "FAILED TO DECOMPRESS FILE");
+        ESP_LOGE("map", "FAILED TO UNCOMPRESS FILE");
         return NULL;
     }
 
@@ -81,15 +92,15 @@ char* getFileName(float lat, float lon, uint32_t zoom, char* tilesRootDir, char*
         .y = lon
     };
     coords = deg2float(coords, zoom);
-    int nApp = sprintf(&filePathBuffer[n], "%u", zoom);
+    int nApp = sprintf(&filePathBuffer[n], "%lu", zoom);
     n += nApp;
     filePathBuffer[n] = '/';
     n++;
-    nApp = sprintf(&filePathBuffer[n], "%u", (uint32_t)coords.x);
+    nApp = sprintf(&filePathBuffer[n], "%lu", (uint32_t)coords.x);
     n += nApp;
     filePathBuffer[n] = '/';
     n++;
-    nApp = sprintf(&filePathBuffer[n], "%u", (uint32_t)coords.y);
+    nApp = sprintf(&filePathBuffer[n], "%lu", (uint32_t)coords.y);
     n += nApp;
     nApp = strlen(imageFileExtesion);
     memcpy(&filePathBuffer[n], imageFileExtesion, nApp);
@@ -106,15 +117,15 @@ char* getFileNameXY(float x, float y, uint32_t zoom, char* tilesRootDir, char* i
         .x = x,
         .y = y
     };
-    int nApp = sprintf(&filePathBuffer[n], "%u", zoom);
+    int nApp = sprintf(&filePathBuffer[n], "%lu", zoom);
     n += nApp;
     filePathBuffer[n] = '/';
     n++;
-    nApp = sprintf(&filePathBuffer[n], "%u", (uint32_t)coords.x);
+    nApp = sprintf(&filePathBuffer[n], "%lu", (uint32_t)coords.x);
     n += nApp;
     filePathBuffer[n] = '/';
     n++;
-    nApp = sprintf(&filePathBuffer[n], "%u", (uint32_t)coords.y);
+    nApp = sprintf(&filePathBuffer[n], "%lu", (uint32_t)coords.y);
     n += nApp;
     nApp = strlen(imageFileExtesion);
     memcpy(&filePathBuffer[n], imageFileExtesion, nApp);
@@ -123,7 +134,16 @@ char* getFileNameXY(float x, float y, uint32_t zoom, char* tilesRootDir, char* i
 }
 
 
-void updateMap(uint16_t* buffer, float lat, float lon, uint32_t zoom, char* tilesRootDir, char* imageFileExtesion, const uint16_t* colorPalette) {
+void updateMap(
+    uint16_t* buffer, 
+    float lat, 
+    float lon, 
+    uint32_t zoom, 
+    char* tilesRootDir, 
+    char* imageFileExtesion, 
+    const uint16_t* colorPalette,
+    mapBorders* borders
+) {
     vec2 coords = {
         .x = lat,
         .y = lon
@@ -131,6 +151,14 @@ void updateMap(uint16_t* buffer, float lat, float lon, uint32_t zoom, char* tile
     vec2 linearCoords = deg2float(coords, zoom);
     float leftBorder = linearCoords.x - (float)MAP_CENTER_X / (float)TILE_WIDTH;
     float topBorder = linearCoords.y - (float)MAP_CENTER_Y / (float)TILE_HEIGHT;
+
+    if (borders) {
+        borders->left = leftBorder;
+        borders->top = topBorder;
+        borders->lower = topBorder + (float)MAP_HEIGHT / (float)TILE_HEIGHT;
+        borders->right = leftBorder + (float)MAP_WIDTH / (float)TILE_WIDTH;
+    }
+
     linearCoords.x = leftBorder;
     linearCoords.y = topBorder;
     uint16_t curMapPixX = 0;
@@ -178,16 +206,25 @@ void updateMap(uint16_t* buffer, float lat, float lon, uint32_t zoom, char* tile
 }
 
 
-void UpdateWindowBuffer(uint16_t* buffer, float lat, float lon, uint32_t zoom, char* tilesRootDir, char* imageFileExtesion, const uint16_t* colorPalette) {
+void UpdateWindowBuffer(
+    uint16_t* buffer, 
+    float lat, 
+    float lon, 
+    uint32_t zoom, 
+    char* tilesRootDir, 
+    char* imageFileExtesion, 
+    const uint16_t* colorPalette, 
+    mapBorders* borders
+) {
     if (zoom < MIN_ZOOM || zoom > MAX_ZOOM) {
         return;
     }
-    updateMap(buffer, lat, lon, zoom, tilesRootDir, imageFileExtesion, colorPalette);
-    for (int i = 0; i < MAP_HEIGHT * MAP_WIDTH; i += MAP_WIDTH) {
-        for (int j = 0; j < MAP_WIDTH / 2; j++) {
-            uint16_t tmp = buffer[i + j];
-            buffer[i + j] = buffer[i + MAP_WIDTH - 1 - j];
-            buffer[i + MAP_WIDTH - 1 - j] = tmp;
-        }
-    }
+    updateMap(buffer, lat, lon, zoom, tilesRootDir, imageFileExtesion, colorPalette, borders);
+    // for (int i = 0; i < MAP_HEIGHT * MAP_WIDTH; i += MAP_WIDTH) {
+    //     for (int j = 0; j < MAP_WIDTH / 2; j++) {
+    //         uint16_t tmp = buffer[i + j];
+    //         buffer[i + j] = buffer[i + MAP_WIDTH - 1 - j];
+    //         buffer[i + MAP_WIDTH - 1 - j] = tmp;
+    //     }
+    // }
 }

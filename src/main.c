@@ -21,6 +21,7 @@
 #include "esp_lcd_ili9341.h"
 #include "unity.h"
 #include "colors.h"
+#include "esp_lcd_touch_xpt2046.h"
 
 
 static uint16_t* windowBuffer;
@@ -38,8 +39,11 @@ spi_bus_config_t* global_buscfg;
 #define PIN_NUM_LCD_DC         (GPIO_NUM_2)
 #define PIN_NUM_LCD_RST        (GPIO_NUM_4)
 #define PIN_NUM_LCD_BL         (GPIO_NUM_16)
+#define PIN_NUM_TOUCH_CS       (GPIO_NUM_21)
 
 #define DELAY_TIME_MS          (3000)
+
+
 
 
 #define TAG "test"
@@ -50,6 +54,11 @@ typedef struct esp_ili9341 {
     esp_lcd_panel_io_handle_t panel_io;
     esp_lcd_panel_handle_t panel_handle;
 } esp_ili9341;
+
+typedef struct xpt2046 {
+    esp_lcd_touch_handle_t tp;
+    esp_lcd_panel_io_handle_t io;
+} xpt2046;
 
 
 IRAM_ATTR static bool notify_refresh_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx) {
@@ -69,17 +78,7 @@ static void draw_map(esp_lcd_panel_handle_t panel_handle, const uint16_t* color_
 }
 
 
-esp_ili9341* ili9341_init_spi() {
-    /*
-     * DISPLAY SETUP
-     * MISO     Not connected
-     * MOSI     23
-     * CLK      18
-     * CS       15
-     * DC       2
-     * RST      4
-     * LED      3.3V
-     */
+void init_spi() {
     gpio_config_t io_conf = {
         .pin_bit_mask = BIT64(PIN_NUM_LCD_BL),
         .mode = GPIO_MODE_OUTPUT,
@@ -90,12 +89,52 @@ esp_ili9341* ili9341_init_spi() {
     gpio_config(&io_conf);
     gpio_set_level(PIN_NUM_LCD_BL, 1);
 
+    gpio_config_t tp_cs_cfg = {
+    .pin_bit_mask = BIT64(PIN_NUM_TOUCH_CS),
+    .mode = GPIO_MODE_OUTPUT,
+    .pull_up_en = GPIO_PULLUP_DISABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&tp_cs_cfg);
+    gpio_set_level(PIN_NUM_TOUCH_CS, 1); 
+
     ESP_LOGI(TAG, "Initialize SPI bus");
     spi_bus_config_t buscfg = ILI9341_PANEL_BUS_SPI_CONFIG(PIN_NUM_LCD_PCLK, PIN_NUM_LCD_DATA0,
                                     LCD_H_RES * 80 * LCD_BIT_PER_PIXEL / 8);
     buscfg.miso_io_num = 19;
     global_buscfg = &buscfg;
     spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO);
+}
+
+
+esp_ili9341* ili9341_init() {
+    /*
+     * DISPLAY SETUP
+     * MISO     Not connected
+     * MOSI     23
+     * CLK      18
+     * CS       15
+     * DC       2
+     * RST      4
+     * LED      3.3V
+     */
+    // gpio_config_t io_conf = {
+    //     .pin_bit_mask = BIT64(PIN_NUM_LCD_BL),
+    //     .mode = GPIO_MODE_OUTPUT,
+    //     .pull_up_en = GPIO_PULLUP_DISABLE,
+    //     .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    //     .intr_type = GPIO_INTR_DISABLE,
+    // };
+    // gpio_config(&io_conf);
+    // gpio_set_level(PIN_NUM_LCD_BL, 1);
+
+    // ESP_LOGI(TAG, "Initialize SPI bus");
+    // spi_bus_config_t buscfg = ILI9341_PANEL_BUS_SPI_CONFIG(PIN_NUM_LCD_PCLK, PIN_NUM_LCD_DATA0,
+    //                                 LCD_H_RES * 80 * LCD_BIT_PER_PIXEL / 8);
+    // buscfg.miso_io_num = 19;
+    // global_buscfg = &buscfg;
+    // spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO);
 
     ESP_LOGI(TAG, "Install panel IO");
     esp_lcd_panel_io_handle_t io_handle = NULL;
@@ -114,7 +153,7 @@ esp_ili9341* ili9341_init_spi() {
     esp_lcd_new_panel_ili9341(io_handle, &panel_config, &panel_handle);
     esp_lcd_panel_reset(panel_handle);
     esp_lcd_panel_init(panel_handle);
-    esp_lcd_panel_mirror(panel_handle, true, true);
+    esp_lcd_panel_mirror(panel_handle, false, true);
     esp_lcd_panel_disp_off(panel_handle, false);
     esp_ili9341* device = (esp_ili9341*)malloc(sizeof(esp_ili9341*));
     device->panel_handle = panel_handle;
@@ -165,10 +204,55 @@ sdmmc_card_t* init_sd() {
         }
         // esp_restart();
     }
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to mount filesystem.");
+        return NULL;
+    }
     ESP_LOGI("example", "Filesystem mounted");
     sdmmc_card_print_info(stdout, card);
 
     return card;
+}
+
+
+xpt2046 xpt2046_init() {
+    esp_lcd_touch_handle_t tp = NULL;
+    esp_lcd_panel_io_handle_t tp_io_handle = NULL;
+    esp_lcd_panel_io_spi_config_t tp_io_config = ESP_LCD_TOUCH_IO_SPI_XPT2046_CONFIG(PIN_NUM_TOUCH_CS);
+    // vTaskDelay(500 / portTICK_PERIOD_MS);
+    esp_err_t err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &tp_io_config, &tp_io_handle);
+    ESP_LOGI("ERROR 1 STATUS", "ERROR: %d", err); 
+    // vTaskDelay(500 / portTICK_PERIOD_MS);
+    esp_lcd_touch_config_t tp_cfg = {
+        .x_max = LCD_H_RES,
+        .y_max = LCD_V_RES,
+        .rst_gpio_num = -1,
+        .int_gpio_num = -1,
+        .flags = {
+            .swap_xy = 0,
+            .mirror_x = 0,
+            .mirror_y = 0,
+        },
+    };
+    ESP_LOGI(TAG, "IO HANDLE MEM: %p", &tp_io_handle);
+    ESP_LOGI(TAG, "IO CONFIG MEM: %p", &tp_io_config);
+    // vTaskDelay(500 / portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "Initialize touch controller XPT2046");
+    err = esp_lcd_touch_new_spi_xpt2046(tp_io_handle, &tp_cfg, &tp);
+    // vTaskDelay(500 / portTICK_PERIOD_MS);
+    ESP_LOGI("ERROR 2 STATUS", "ERROR: %d", err);
+    xpt2046 xpt = {
+        .tp =tp,
+        .io = tp_io_handle
+    };
+    return xpt;
+}
+
+
+void xpt2046_deinit(xpt2046 xpt) {
+    esp_lcd_touch_del(xpt.tp);
+    esp_lcd_panel_io_del(xpt.io);
+    gpio_reset_pin(PIN_NUM_TOUCH_CS);
 }
 
 
@@ -195,17 +279,41 @@ void lstdir(char* path) {
 void app_main(void)
 {
     printf("Hello world!\n");
+    mapBorders borders;
     windowBuffer = (uint16_t*)malloc(MAP_HEIGHT * MAP_WIDTH * 2);
     if (!windowBuffer) {
         ESP_LOGI("main", "FAILED MEMORY ALLOCATION FOR WINDOW BUFFER");
     }
-    esp_ili9341* device = ili9341_init_spi();
+    init_spi();
     sdmmc_card_t* card = init_sd();
+    esp_ili9341* device = ili9341_init();
 
-    UpdateWindowBuffer(windowBuffer, 59.938279, 30.314198, 14, "/card/cmptls/", ".gz", colorPalette);
+    lstdir("/card/");
+
+
+    UpdateWindowBuffer(windowBuffer, 59.935855, 30.307444, 15, "/card/cmptls/", ".gz", colorPalette, &borders);
     draw_map(device->panel_handle, windowBuffer);
+    UpdateWindowBuffer(windowBuffer, 59.941846, 30.322033, 15, "/card/cmptls/", ".gz", colorPalette, &borders);
+    draw_map(device->panel_handle, windowBuffer);
+    printf("\nBORDERS: %f %f %f %f\n", borders.left, borders.lower, borders.top, borders.right);
+    xpt2046 panel = xpt2046_init();
+    ESP_LOGI(TAG, "TOUCH: %p", &panel);
+    for (;;) {
+        uint16_t x = 0, y = 0;
+        uint8_t point_num = 0;
+        bool touched;
 
+        esp_err_t err = esp_lcd_touch_read_data(panel.tp);
+        // ESP_LOGI("ERROR 3 STATUS", "ERROR: %d", err);
+        vTaskDelay(25 / portTICK_PERIOD_MS);
+        touched = esp_lcd_touch_get_coordinates(panel.tp, &x, &y, NULL, &point_num, 1);
+        // ESP_LOGI(TAG, "Touched: %d", touched);
+        if (touched) {
+            ESP_LOGI(TAG, "Touch at x=%d y=%d", x, y);
+        }
+    }
     esp_vfs_fat_sdcard_unmount("/card", card);
+    xpt2046_deinit(panel);
     ili9341_deinit(device->panel_handle, device->panel_io);
     printf("Restarting now.\n");
     fflush(stdout);

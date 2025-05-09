@@ -40,7 +40,18 @@ typedef struct ivec2 {
 } ivec2;
 
 
+typedef struct mapBorders {
+    float top;
+    float left;
+    float right;
+    float lower;
+} mapBorders;
+
+
 vec2 deg2float(vec2 coords, uint32_t zoom);
+
+
+vec2 float2deg(vec2 coords, uint32_t zoom);
 
 
 u16vec2 deg2pointOnMap(vec2 tile, uint32_t zoom, uint16_t tile_resolition);
@@ -49,7 +60,16 @@ u16vec2 deg2pointOnMap(vec2 tile, uint32_t zoom, uint16_t tile_resolition);
 uint8_t* getFileContent(const char* filePath);
 
 
-void UpdateWindowBuffer(uint16_t* buffer, float lat, float lon, uint32_t zoom, char* tilesRootDir, char* imageFileExtesion, const uint16_t* colorPalette);
+void UpdateWindowBuffer(
+    uint16_t* buffer, 
+    float lat, 
+    float lon, 
+    uint32_t zoom, 
+    char* tilesRootDir, 
+    char* imageFileExtesion, 
+    const uint16_t* colorPalette,
+    mapBorders* borders
+);
 
 
 char* getFileName(float lat, float lon, uint32_t zoom, char* tilesRootDir, char* imageFileExtesion);
