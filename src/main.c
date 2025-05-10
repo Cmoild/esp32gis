@@ -22,16 +22,15 @@
 #include "unity.h"
 #include "colors.h"
 #include "esp_lcd_touch_xpt2046.h"
-
-
-static uint16_t* windowBuffer;
-spi_bus_config_t* global_buscfg;
+#include "lvgl.h"
 
 
 #define LCD_HOST               SPI2_HOST
 #define LCD_H_RES              (320)
 #define LCD_V_RES              (240)
 #define LCD_BIT_PER_PIXEL      (16)
+
+#define DASH_BAR_HEIGHT 80
 
 #define PIN_NUM_LCD_CS         (GPIO_NUM_15)
 #define PIN_NUM_LCD_PCLK       (GPIO_NUM_18)
@@ -43,7 +42,13 @@ spi_bus_config_t* global_buscfg;
 
 #define DELAY_TIME_MS          (3000)
 
+#define BUFFER_HEIGHT 1
 
+static uint16_t* windowBuffer;
+spi_bus_config_t* global_buscfg;
+static lv_color_t draw_buf_array[LCD_V_RES * BUFFER_HEIGHT];
+static lv_draw_buf_t draw_buf;
+esp_lcd_panel_handle_t g_panel_handle;
 
 
 #define TAG "test"
@@ -61,11 +66,50 @@ typedef struct xpt2046 {
 } xpt2046;
 
 
+void *lvgl_malloc(size_t size) {
+    return heap_caps_malloc(size, MALLOC_CAP_EXEC | MALLOC_CAP_8BIT);
+}
+
+void lvgl_free(void *ptr) {
+    heap_caps_free(ptr);
+}
+
+
 IRAM_ATTR static bool notify_refresh_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx) {
     BaseType_t need_yield = pdFALSE;
 
     xSemaphoreGiveFromISR(refresh_finish, &need_yield);
     return (need_yield == pdTRUE);
+}
+
+
+static void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map) {
+    refresh_finish = xSemaphoreCreateBinary();
+
+    // ESP_LOGI("flush", "HEIGHT: %ld", area->y2 - area->y1);
+    
+    uint16_t* buf = (uint16_t*)px_map;
+
+   
+    for (int i = 0; i < BUFFER_HEIGHT * LCD_V_RES; i++) {
+        buf[i] = ((buf[i] & 0xFF) << 8) | (buf[i] >> 8);
+    }
+    esp_err_t err = esp_lcd_panel_draw_bitmap(
+        g_panel_handle, 
+        area->x1, area->y1 + MAP_HEIGHT, 
+        area->x2 + 1, area->y2 + MAP_HEIGHT + 1, 
+        buf
+    );
+    if (err != ESP_OK) {
+        
+    }
+
+
+    xSemaphoreTake(refresh_finish, portMAX_DELAY);
+    vSemaphoreDelete(refresh_finish);
+
+    
+    lv_display_flush_ready(display);
 }
 
 
@@ -119,22 +163,6 @@ esp_ili9341* ili9341_init() {
      * RST      4
      * LED      3.3V
      */
-    // gpio_config_t io_conf = {
-    //     .pin_bit_mask = BIT64(PIN_NUM_LCD_BL),
-    //     .mode = GPIO_MODE_OUTPUT,
-    //     .pull_up_en = GPIO_PULLUP_DISABLE,
-    //     .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    //     .intr_type = GPIO_INTR_DISABLE,
-    // };
-    // gpio_config(&io_conf);
-    // gpio_set_level(PIN_NUM_LCD_BL, 1);
-
-    // ESP_LOGI(TAG, "Initialize SPI bus");
-    // spi_bus_config_t buscfg = ILI9341_PANEL_BUS_SPI_CONFIG(PIN_NUM_LCD_PCLK, PIN_NUM_LCD_DATA0,
-    //                                 LCD_H_RES * 80 * LCD_BIT_PER_PIXEL / 8);
-    // buscfg.miso_io_num = 19;
-    // global_buscfg = &buscfg;
-    // spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO);
 
     ESP_LOGI(TAG, "Install panel IO");
     esp_lcd_panel_io_handle_t io_handle = NULL;
@@ -157,6 +185,7 @@ esp_ili9341* ili9341_init() {
     esp_lcd_panel_disp_off(panel_handle, false);
     esp_ili9341* device = (esp_ili9341*)malloc(sizeof(esp_ili9341*));
     device->panel_handle = panel_handle;
+    g_panel_handle = panel_handle;
     device->panel_io = io_handle;
     return device;
 }
@@ -256,6 +285,100 @@ void xpt2046_deinit(xpt2046 xpt) {
 }
 
 
+lv_display_t* lvgl_init(void) {
+    ESP_LOGI(TAG, "Initialize LVGL library");
+
+    
+    lv_init();
+
+    
+    lv_result_t res = lv_draw_buf_init(&draw_buf,
+                                       LCD_V_RES,
+                                       BUFFER_HEIGHT, 
+                                       LV_COLOR_FORMAT_RGB565,
+                                       0, 
+                                       draw_buf_array,
+                                       sizeof(draw_buf_array));
+    if (res != LV_RESULT_OK) {
+        ESP_LOGE(TAG, "Failed to initialize draw buffer");
+        return NULL;
+    }
+
+  
+    lv_display_t* display = lv_display_create(LCD_V_RES, DASH_BAR_HEIGHT);
+    if (!display) {
+        ESP_LOGE(TAG, "FAILED DISPLAY INITIALIZATION");
+        return NULL;
+    }
+
+  
+    lv_display_set_draw_buffers(display, &draw_buf, NULL);
+
+
+    lv_display_set_flush_cb(display, my_flush_cb);
+
+    return display;
+}
+
+
+void create_gui(void) {
+
+    static lv_obj_t* labelSPD;
+    labelSPD = lv_label_create(lv_screen_active());
+    lv_label_set_text(labelSPD, "28.3");
+    lv_obj_align(labelSPD, LV_ALIGN_CENTER, -3, -20);
+    lv_obj_set_style_text_font(labelSPD, &lv_font_montserrat_32, 0);
+    
+    static lv_obj_t* labelKMH;
+    labelKMH = lv_label_create(lv_screen_active());
+    lv_label_set_text(labelKMH, "km/h");
+    lv_obj_align(labelKMH, LV_ALIGN_CENTER, 50, -15);
+    lv_obj_set_style_text_font(labelKMH, &lv_font_montserrat_14, 0);
+
+    static lv_obj_t* labelT;
+    labelT = lv_label_create(lv_screen_active());
+    lv_label_set_text(labelT, "00:27:45");
+    lv_obj_align(labelT, LV_ALIGN_BOTTOM_MID, 0, -5);
+    lv_obj_set_style_text_font(labelT, &lv_font_montserrat_32, 0);
+
+    static lv_obj_t* labelDIST;
+    labelDIST = lv_label_create(lv_screen_active());
+    lv_label_set_text(labelDIST, "100.2 km");
+    lv_obj_align(labelDIST, LV_ALIGN_LEFT_MID, 10, -15);
+    lv_obj_set_style_text_font(labelDIST, &lv_font_montserrat_14, 0);
+
+    static lv_obj_t* btn;
+    btn = lv_button_create(lv_screen_active());
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_size(btn, 40, 39);
+
+    static lv_obj_t* btn_label;
+    btn_label = lv_label_create(btn);
+    lv_label_set_text(btn_label, "-");
+    lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_48, 0);
+    lv_obj_align(btn_label, LV_ALIGN_CENTER, 0, -5);
+
+    static lv_obj_t* btn2;
+    btn2 = lv_button_create(lv_screen_active());
+    lv_obj_align(btn2, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_size(btn2, 40, 39);
+
+    static lv_obj_t* btn_label2;
+    btn_label2 = lv_label_create(btn2);
+    lv_label_set_text(btn_label2, "+");
+    lv_obj_set_style_text_font(btn_label2, &lv_font_montserrat_48, 0);
+    lv_obj_align(btn_label2, LV_ALIGN_CENTER, 0, 0);
+}
+
+
+void lvgl_loop(void* arg) {
+    while (1) {
+        lv_timer_handler();
+        vTaskDelay(pdMS_TO_TICKS(5));  
+    }
+}
+
+
 void lstdir(char* path) {
     DIR *dp;
     struct dirent *ep;     
@@ -278,27 +401,66 @@ void lstdir(char* path) {
 
 void app_main(void)
 {
+    multi_heap_info_t info;
+    heap_caps_get_info(&info, MALLOC_CAP_8BIT);
+    printf("\n[DRAM]   Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
+
+    heap_caps_get_info(&info, MALLOC_CAP_EXEC);
+    printf("[IRAM]   Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
+
+    heap_caps_get_info(&info, MALLOC_CAP_DMA);
+    printf("[DMA-capable] Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
+    
     printf("Hello world!\n");
     mapBorders borders;
     windowBuffer = (uint16_t*)malloc(MAP_HEIGHT * MAP_WIDTH * 2);
+
+    heap_caps_get_info(&info, MALLOC_CAP_8BIT);
+    printf("\n[DRAM]   Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
+
+    heap_caps_get_info(&info, MALLOC_CAP_EXEC);
+    printf("[IRAM]   Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
+
+    heap_caps_get_info(&info, MALLOC_CAP_DMA);
+    printf("[DMA-capable] Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
+
     if (!windowBuffer) {
         ESP_LOGI("main", "FAILED MEMORY ALLOCATION FOR WINDOW BUFFER");
+        return;
     }
     init_spi();
     sdmmc_card_t* card = init_sd();
     esp_ili9341* device = ili9341_init();
-
+    xpt2046 panel = xpt2046_init();
+    lv_display_t* lvgl_display = lvgl_init();
     lstdir("/card/");
+    
 
+    heap_caps_get_info(&info, MALLOC_CAP_8BIT);
+    printf("\n[DRAM]   Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
+
+    heap_caps_get_info(&info, MALLOC_CAP_EXEC);
+    printf("[IRAM]   Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
+
+    heap_caps_get_info(&info, MALLOC_CAP_DMA);
+
+
+    printf("[DMA-capable] Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
+    ESP_LOGI("MEM", "Free: %u, Largest block: %u", info.total_free_bytes, info.largest_free_block);
 
     UpdateWindowBuffer(windowBuffer, 59.935855, 30.307444, 15, "/card/cmptls/", ".gz", colorPalette, &borders);
     draw_map(device->panel_handle, windowBuffer);
     UpdateWindowBuffer(windowBuffer, 59.941846, 30.322033, 15, "/card/cmptls/", ".gz", colorPalette, &borders);
     draw_map(device->panel_handle, windowBuffer);
     printf("\nBORDERS: %f %f %f %f\n", borders.left, borders.lower, borders.top, borders.right);
-    xpt2046 panel = xpt2046_init();
+    
+    create_gui();
+    // lv_screen_load(lv_screen_active());
+    xTaskCreate(lvgl_loop, "lvgl_loop", 4096, NULL, 1, NULL);
     ESP_LOGI(TAG, "TOUCH: %p", &panel);
+    vTaskDelay(1000);
     for (;;) {
+        if (!refresh_finish) continue;
         uint16_t x = 0, y = 0;
         uint8_t point_num = 0;
         bool touched;
@@ -310,6 +472,8 @@ void app_main(void)
         // ESP_LOGI(TAG, "Touched: %d", touched);
         if (touched) {
             ESP_LOGI(TAG, "Touch at x=%d y=%d", x, y);
+            UpdateWindowBuffer(windowBuffer, 59.941846, 30.322033, 15, "/card/cmptls/", ".gz", colorPalette, &borders);
+            draw_map(device->panel_handle, windowBuffer);
         }
     }
     esp_vfs_fat_sdcard_unmount("/card", card);
