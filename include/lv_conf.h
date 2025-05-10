@@ -2,7 +2,11 @@
 
 
 #define LV_MEM_SIZE (16 * 1024)
-#define LV_MEM_CUSTOM 0
+#define LV_MEM_CUSTOM 1
+
+#define LV_MEM_CUSTOM_INCLUDE <lv_allocation.h>
+#define LV_MEM_CUSTOM_ALLOC   lvgl_malloc
+#define LV_MEM_CUSTOM_FREE    lvgl_free
 
 
 #define LV_COLOR_DEPTH 16

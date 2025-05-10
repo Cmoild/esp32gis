@@ -42,18 +42,7 @@
 
 #define DELAY_TIME_MS          (3000)
 
-#define BUFFER_HEIGHT 1
-
-static uint16_t* windowBuffer;
-spi_bus_config_t* global_buscfg;
-static lv_color_t draw_buf_array[LCD_V_RES * BUFFER_HEIGHT];
-static lv_draw_buf_t draw_buf;
-esp_lcd_panel_handle_t g_panel_handle;
-
-
-#define TAG "test"
-static SemaphoreHandle_t refresh_finish = NULL;
-
+#define BUFFER_HEIGHT 4
 
 typedef struct esp_ili9341 {
     esp_lcd_panel_io_handle_t panel_io;
@@ -65,14 +54,28 @@ typedef struct xpt2046 {
     esp_lcd_panel_io_handle_t io;
 } xpt2046;
 
+static uint16_t* windowBuffer;
+spi_bus_config_t* global_buscfg;
+static lv_color_t draw_buf_array[LCD_V_RES * BUFFER_HEIGHT];
+static lv_draw_buf_t draw_buf;
+esp_lcd_panel_handle_t g_panel_handle;
+static _lock_t lvgl_api_lock;
+static lv_obj_t* btnMinus;
+static lv_obj_t* btnPlus;
+static int8_t g_map_zoom = 15;
+static float cur_lat = 59.941846;
+static float cur_lon = 30.322033;
 
-void *lvgl_malloc(size_t size) {
-    return heap_caps_malloc(size, MALLOC_CAP_EXEC | MALLOC_CAP_8BIT);
-}
 
-void lvgl_free(void *ptr) {
-    heap_caps_free(ptr);
-}
+// Touch panel borders
+const int y_min = 256;
+const int y_max = 3900;
+const int x_min = 300;
+const int x_max = 3800;
+
+
+#define TAG "test"
+static SemaphoreHandle_t refresh_finish = NULL;
 
 
 IRAM_ATTR static bool notify_refresh_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx) {
@@ -84,14 +87,17 @@ IRAM_ATTR static bool notify_refresh_ready(esp_lcd_panel_io_handle_t panel_io, e
 
 
 static void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map) {
+    ESP_LOGI("FLUSH CB", "called");
     refresh_finish = xSemaphoreCreateBinary();
 
-    // ESP_LOGI("flush", "HEIGHT: %ld", area->y2 - area->y1);
+    int width  = area->x2 - area->x1 + 1;
+    int height = area->y2 - area->y1 + 1;
+    int size = width * height;
     
     uint16_t* buf = (uint16_t*)px_map;
 
    
-    for (int i = 0; i < BUFFER_HEIGHT * LCD_V_RES; i++) {
+    for (int i = 0; i < size; i++) {
         buf[i] = ((buf[i] & 0xFF) << 8) | (buf[i] >> 8);
     }
     esp_err_t err = esp_lcd_panel_draw_bitmap(
@@ -110,6 +116,27 @@ static void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t 
 
     
     lv_display_flush_ready(display);
+}
+
+
+static void my_touch_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    uint16_t touchpad_x[1] = {0};
+    uint16_t touchpad_y[1] = {0};
+    uint8_t touchpad_cnt = 0;
+    ESP_LOGI("TOUCH CB", "called");
+    esp_lcd_touch_handle_t touch_pad = lv_indev_get_user_data(indev);
+    esp_lcd_touch_read_data(touch_pad);
+    /* Get coordinates */
+    bool touchpad_pressed = esp_lcd_touch_get_coordinates(touch_pad, touchpad_x, touchpad_y, NULL, &touchpad_cnt, 1);
+
+    if (touchpad_pressed && touchpad_cnt > 0) {
+        data->point.x = touchpad_x[0];
+        data->point.y = touchpad_y[0];
+        data->state = LV_INDEV_STATE_PRESSED;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
 }
 
 
@@ -168,6 +195,7 @@ esp_ili9341* ili9341_init() {
     esp_lcd_panel_io_handle_t io_handle = NULL;
     const esp_lcd_panel_io_spi_config_t io_config = ILI9341_PANEL_IO_SPI_CONFIG(PIN_NUM_LCD_CS, PIN_NUM_LCD_DC,
             notify_refresh_ready, NULL);
+
     // Attach the LCD to the SPI bus
     esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle);
 
@@ -321,6 +349,22 @@ lv_display_t* lvgl_init(void) {
 }
 
 
+static void btnMinus_event_cb(lv_event_t *e) {
+    ESP_LOGI(TAG, "minus");
+    if (g_map_zoom > MIN_ZOOM) {
+        g_map_zoom--;
+    }
+}
+
+
+static void btnPlus_event_cb(lv_event_t *e) {
+    ESP_LOGI(TAG, "plus");
+    if (g_map_zoom < MAX_ZOOM) {
+        g_map_zoom++;
+    }
+}
+
+
 void create_gui(void) {
 
     static lv_obj_t* labelSPD;
@@ -347,34 +391,175 @@ void create_gui(void) {
     lv_obj_align(labelDIST, LV_ALIGN_LEFT_MID, 10, -15);
     lv_obj_set_style_text_font(labelDIST, &lv_font_montserrat_14, 0);
 
-    static lv_obj_t* btn;
-    btn = lv_button_create(lv_screen_active());
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-    lv_obj_set_size(btn, 40, 39);
+    btnMinus = lv_button_create(lv_screen_active());
+    lv_obj_align(btnMinus, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_size(btnMinus, 40, 39);
+    lv_obj_add_event_cb(btnMinus, btnMinus_event_cb, LV_EVENT_ALL, NULL);
 
     static lv_obj_t* btn_label;
-    btn_label = lv_label_create(btn);
+    btn_label = lv_label_create(btnMinus);
     lv_label_set_text(btn_label, "-");
     lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_48, 0);
     lv_obj_align(btn_label, LV_ALIGN_CENTER, 0, -5);
 
-    static lv_obj_t* btn2;
-    btn2 = lv_button_create(lv_screen_active());
-    lv_obj_align(btn2, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_set_size(btn2, 40, 39);
+    btnPlus = lv_button_create(lv_screen_active());
+    lv_obj_align(btnPlus, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_size(btnPlus, 40, 39);
+    lv_obj_add_event_cb(btnPlus, btnPlus_event_cb, LV_EVENT_ALL, NULL);
 
     static lv_obj_t* btn_label2;
-    btn_label2 = lv_label_create(btn2);
+    btn_label2 = lv_label_create(btnPlus);
     lv_label_set_text(btn_label2, "+");
     lv_obj_set_style_text_font(btn_label2, &lv_font_montserrat_48, 0);
     lv_obj_align(btn_label2, LV_ALIGN_CENTER, 0, 0);
 }
 
 
-void lvgl_loop(void* arg) {
+void lv_port_indev_init(lv_display_t* disp, esp_lcd_touch_handle_t tp) {
+    static lv_indev_t* indev;
+    indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(indev, disp);
+    lv_indev_set_user_data(indev, tp);
+    lv_indev_set_read_cb(indev, my_touch_cb);
+}
+
+
+static void example_lvgl_port_task(void *arg)
+{
+    ESP_LOGI(TAG, "Starting LVGL task");
     while (1) {
+        _lock_acquire(&lvgl_api_lock);
         lv_timer_handler();
-        vTaskDelay(pdMS_TO_TICKS(5));  
+        _lock_release(&lvgl_api_lock);
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+
+void map_drawing_routine(esp_ili9341* device) {
+    mapBorders borders;
+    UpdateWindowBuffer(windowBuffer, cur_lat, cur_lon, g_map_zoom, "/card/cmptls/", ".gz", colorPalette, &borders);
+    draw_map(device->panel_handle, windowBuffer);
+    ESP_LOGI(TAG, "ZOOM: %d", g_map_zoom);
+}
+
+
+void raw_val_to_pixel(uint16_t* x, uint16_t* y) {
+    x[0] = (uint16_t)((float)MAX((int)x[0] - x_min, 0) / (float)(x_max - x_min) * (float)LCD_V_RES);
+    y[0] = (uint16_t)((float)MAX((int)y[0] - y_min, 0) / (float)(y_max - y_min) * (float)LCD_H_RES);
+}
+
+
+void compute_map_shift(const char command) {
+    vec2 deg, linear;
+    switch (command)
+    {
+    case 'd':
+        deg.x = cur_lat;
+        deg.y = cur_lon;
+        linear = deg2float(deg, (uint32_t)g_map_zoom);
+        linear.y += 0.3;
+        deg = float2deg(linear, g_map_zoom);
+        cur_lon = deg.x;
+        cur_lat = deg.y;
+        break;
+    case 'u':
+        deg.x = cur_lat;
+        deg.y = cur_lon;
+        linear = deg2float(deg, (uint32_t)g_map_zoom);
+        linear.y -= 0.3;
+        deg = float2deg(linear, g_map_zoom);
+        cur_lon = deg.x;
+        cur_lat = deg.y;
+        break;
+    case 'l':
+        deg.x = cur_lat;
+        deg.y = cur_lon;
+        linear = deg2float(deg, (uint32_t)g_map_zoom);
+        linear.x -= 0.3;
+        deg = float2deg(linear, g_map_zoom);
+        cur_lon = deg.x;
+        cur_lat = deg.y;
+        break;
+    case 'r':
+        deg.x = cur_lat;
+        deg.y = cur_lon;
+        linear = deg2float(deg, (uint32_t)g_map_zoom);
+        linear.x += 0.3;
+        deg = float2deg(linear, g_map_zoom);
+        cur_lon = deg.x;
+        cur_lat = deg.y;
+        break;
+    default:
+        break;
+    }
+}
+
+
+static void manual_tp_handling(xpt2046 panel, esp_ili9341* device) {
+    g_map_zoom = 15;
+    ESP_LOGI(TAG, "Starting manual_tp_handling task");
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(30));
+        uint16_t touchpad_x[1] = {0};
+        uint16_t touchpad_y[1] = {0};
+        uint8_t touchpad_cnt = 0;
+        esp_lcd_touch_read_data(panel.tp);
+        /* Get coordinates */
+        bool touchpad_pressed = esp_lcd_touch_get_coordinates(panel.tp, touchpad_x, touchpad_y, NULL, &touchpad_cnt, 1);
+        bool map_changed = false;
+
+        if (touchpad_pressed && touchpad_cnt > 0) {
+            raw_val_to_pixel(touchpad_x, touchpad_y);
+            // Button pressed
+            if (touchpad_x[0] < 50) {
+                if (touchpad_y[0] < 280 && touchpad_y[0] > 240) {
+                    lv_obj_send_event(btnPlus, LV_EVENT_ALL, NULL);
+                    map_changed = true;
+                }
+                if (touchpad_y[0] > 280) {
+                    lv_obj_send_event(btnMinus, LV_EVENT_ALL, NULL);
+                    map_changed = true;
+                }
+            }
+            // Map pressed
+            if (touchpad_y[0] < MAP_HEIGHT) {
+                //Bottom right corner
+                if (touchpad_y[0] > touchpad_x[0]) {
+                    //Bottom left corner
+                    if (touchpad_y[0] > -(touchpad_x[0] - MAP_WIDTH)) {
+                        ESP_LOGI(TAG, "down");
+                        compute_map_shift('d');
+                        map_changed = true;
+                    }
+                    //Top right corner
+                    else {
+                        ESP_LOGI(TAG, "right");
+                        compute_map_shift('r');
+                        map_changed = true;
+                    }
+                }
+                // Top Left corner
+                else {
+                    //Bottom left corner
+                    if (touchpad_y[0] > -(touchpad_x[0] - MAP_WIDTH)) {
+                        ESP_LOGI(TAG, "left");
+                        compute_map_shift('l');
+                        map_changed = true;
+                    }
+                    //Top right corner
+                    else {
+                        ESP_LOGI(TAG, "up");
+                        compute_map_shift('u');
+                        map_changed = true;
+                    }
+                }
+            }
+            if (map_changed) {
+                map_drawing_routine(device);
+            }
+        }
     }
 }
 
@@ -433,6 +618,7 @@ void app_main(void)
     esp_ili9341* device = ili9341_init();
     xpt2046 panel = xpt2046_init();
     lv_display_t* lvgl_display = lvgl_init();
+
     lstdir("/card/");
     
 
@@ -448,34 +634,20 @@ void app_main(void)
     printf("[DMA-capable] Free: %u bytes, Largest block: %u bytes\n", info.total_free_bytes, info.largest_free_block);
     ESP_LOGI("MEM", "Free: %u, Largest block: %u", info.total_free_bytes, info.largest_free_block);
 
-    UpdateWindowBuffer(windowBuffer, 59.935855, 30.307444, 15, "/card/cmptls/", ".gz", colorPalette, &borders);
+    UpdateWindowBuffer(windowBuffer, 59.935855, 30.307444, g_map_zoom, "/card/cmptls/", ".gz", colorPalette, &borders);
     draw_map(device->panel_handle, windowBuffer);
-    UpdateWindowBuffer(windowBuffer, 59.941846, 30.322033, 15, "/card/cmptls/", ".gz", colorPalette, &borders);
-    draw_map(device->panel_handle, windowBuffer);
-    printf("\nBORDERS: %f %f %f %f\n", borders.left, borders.lower, borders.top, borders.right);
     
+    xTaskCreate(example_lvgl_port_task, "lvgl_loop", 4096, NULL, 1, NULL);
+    _lock_acquire(&lvgl_api_lock);
     create_gui();
-    // lv_screen_load(lv_screen_active());
-    xTaskCreate(lvgl_loop, "lvgl_loop", 4096, NULL, 1, NULL);
+    _lock_release(&lvgl_api_lock);
+    
     ESP_LOGI(TAG, "TOUCH: %p", &panel);
     vTaskDelay(1000);
-    for (;;) {
-        if (!refresh_finish) continue;
-        uint16_t x = 0, y = 0;
-        uint8_t point_num = 0;
-        bool touched;
+    
+    manual_tp_handling(panel, device);
 
-        esp_err_t err = esp_lcd_touch_read_data(panel.tp);
-        // ESP_LOGI("ERROR 3 STATUS", "ERROR: %d", err);
-        vTaskDelay(25 / portTICK_PERIOD_MS);
-        touched = esp_lcd_touch_get_coordinates(panel.tp, &x, &y, NULL, &point_num, 1);
-        // ESP_LOGI(TAG, "Touched: %d", touched);
-        if (touched) {
-            ESP_LOGI(TAG, "Touch at x=%d y=%d", x, y);
-            UpdateWindowBuffer(windowBuffer, 59.941846, 30.322033, 15, "/card/cmptls/", ".gz", colorPalette, &borders);
-            draw_map(device->panel_handle, windowBuffer);
-        }
-    }
+
     esp_vfs_fat_sdcard_unmount("/card", card);
     xpt2046_deinit(panel);
     ili9341_deinit(device->panel_handle, device->panel_io);

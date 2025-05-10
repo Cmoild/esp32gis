@@ -49,7 +49,8 @@ uint8_t* getFileContent(const char* filePath) {
     FILE* fp = fopen(filePath, "rb");
     if (!fp) {
         ESP_LOGE("map", "FAILED TO LOAD FILE");
-        return NULL;
+        uint8_t* failed = (uint8_t*)malloc(65536);
+        return failed;
     }
     fseek(fp, 0, SEEK_END);
     size = ftell(fp);
