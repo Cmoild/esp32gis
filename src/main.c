@@ -3,7 +3,7 @@
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include <mapfuncs.h>
+#include <map.h>
 #include <sys/types.h>
 #include <dirent.h>
 #include "sdmmc_cmd.h"
@@ -23,6 +23,7 @@
 #include "colors.h"
 #include "esp_lcd_touch_xpt2046.h"
 #include "lvgl.h"
+#include "driver/uart.h"
 
 
 #define LCD_HOST               SPI2_HOST
@@ -150,15 +151,15 @@ static void draw_map(esp_lcd_panel_handle_t panel_handle, const uint16_t* color_
 
 
 void init_spi() {
-    gpio_config_t io_conf = {
-        .pin_bit_mask = BIT64(PIN_NUM_LCD_BL),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&io_conf);
-    gpio_set_level(PIN_NUM_LCD_BL, 1);
+    // gpio_config_t io_conf = {
+    //     .pin_bit_mask = BIT64(PIN_NUM_LCD_BL),
+    //     .mode = GPIO_MODE_OUTPUT,
+    //     .pull_up_en = GPIO_PULLUP_DISABLE,
+    //     .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    //     .intr_type = GPIO_INTR_DISABLE,
+    // };
+    // gpio_config(&io_conf);
+    // gpio_set_level(PIN_NUM_LCD_BL, 1);
 
     gpio_config_t tp_cs_cfg = {
     .pin_bit_mask = BIT64(PIN_NUM_TOUCH_CS),
@@ -312,6 +313,46 @@ void xpt2046_deinit(xpt2046 xpt) {
     gpio_reset_pin(PIN_NUM_TOUCH_CS);
 }
 
+void neo6m_init() {
+    uart_port_t uart_port_num = UART_NUM_2;
+    uart_config_t config = {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+    };
+
+    esp_err_t err = uart_param_config(uart_port_num, &config);
+    
+    if (err == ESP_FAIL) {
+        ESP_LOGE("NEO6M", "FAILED UART PARAM CONFIG");
+        return;
+    }
+
+    err = uart_set_pin(uart_port_num, 17, 16, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+
+    if (err == ESP_FAIL) {
+        ESP_LOGE("NEO6M", "FAILED UART SET PIN");
+        return;
+    }
+
+    err = uart_driver_install(uart_port_num, 256, 0, 0, NULL, 0);
+
+    if (err == ESP_FAIL) {
+        ESP_LOGE("NEO6M", "FAILED UART DRIVER INSTALL");
+        return;
+    }
+}
+
+void raw_nmea() { 
+	char buf[256];
+    int len = uart_read_bytes(UART_NUM_2, buf, 256, portMAX_DELAY);
+    if (len > 0) {
+        buf[len] = 0;
+        printf("%s\n", buf);
+    }
+}
 
 lv_display_t* lvgl_init(void) {
     ESP_LOGI(TAG, "Initialize LVGL library");
@@ -510,6 +551,10 @@ static void manual_tp_handling(xpt2046 panel, esp_ili9341* device) {
         bool touchpad_pressed = esp_lcd_touch_get_coordinates(panel.tp, touchpad_x, touchpad_y, NULL, &touchpad_cnt, 1);
         bool map_changed = false;
 
+        raw_nmea();
+        // vTaskDelay(pdMS_TO_TICKS(1000));
+        // continue;
+
         if (touchpad_pressed && touchpad_cnt > 0) {
             raw_val_to_pixel(touchpad_x, touchpad_y);
             // Button pressed
@@ -618,6 +663,7 @@ void app_main(void)
     esp_ili9341* device = ili9341_init();
     xpt2046 panel = xpt2046_init();
     lv_display_t* lvgl_display = lvgl_init();
+    neo6m_init();
 
     lstdir("/card/");
     

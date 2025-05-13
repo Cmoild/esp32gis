@@ -1,4 +1,4 @@
-#include "mapfuncs.h"
+#include "map.h"
 #include <stdio.h>
 #include <puff.h>
 #include "esp_log.h"
