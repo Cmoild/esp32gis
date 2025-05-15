@@ -6,7 +6,6 @@ static lv_color_t draw_buf_array[LCD_V_RES * BUFFER_HEIGHT];
 static lv_draw_buf_t draw_buf;
 
 static void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_map) {
-    ESP_LOGI("FLUSH CB", "called");
     refresh_finish = xSemaphoreCreateBinary();
 
     int width  = area->x2 - area->x1 + 1;
@@ -90,11 +89,16 @@ static void btnPlus_event_cb(lv_event_t *e) {
 }
 
 
+static void btnFollowLocation_event_cb(lv_event_t *e) {
+    ESP_LOGI(LVGL_TAG, "follow");
+    use_gps = !use_gps;
+}
+
+
 void create_gui(void) {
 
-    static lv_obj_t* labelSPD;
     labelSPD = lv_label_create(lv_screen_active());
-    lv_label_set_text(labelSPD, "28.3");
+    lv_label_set_text(labelSPD, "0.0");
     lv_obj_align(labelSPD, LV_ALIGN_CENTER, -3, -20);
     lv_obj_set_style_text_font(labelSPD, &lv_font_montserrat_32, 0);
     
@@ -104,17 +108,16 @@ void create_gui(void) {
     lv_obj_align(labelKMH, LV_ALIGN_CENTER, 50, -15);
     lv_obj_set_style_text_font(labelKMH, &lv_font_montserrat_14, 0);
 
-    static lv_obj_t* labelT;
     labelT = lv_label_create(lv_screen_active());
-    lv_label_set_text(labelT, "00:27:45");
-    lv_obj_align(labelT, LV_ALIGN_BOTTOM_MID, 0, -5);
+    lv_label_set_text(labelT, "00:00");
+    lv_obj_align(labelT, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_text_font(labelT, &lv_font_montserrat_32, 0);
 
-    static lv_obj_t* labelDIST;
-    labelDIST = lv_label_create(lv_screen_active());
-    lv_label_set_text(labelDIST, "100.2 km");
-    lv_obj_align(labelDIST, LV_ALIGN_LEFT_MID, 10, -15);
-    lv_obj_set_style_text_font(labelDIST, &lv_font_montserrat_14, 0);
+    // static lv_obj_t* labelDIST;
+    // labelDIST = lv_label_create(lv_screen_active());
+    // lv_label_set_text(labelDIST, "100.2 km");
+    // lv_obj_align(labelDIST, LV_ALIGN_LEFT_MID, 10, -15);
+    // lv_obj_set_style_text_font(labelDIST, &lv_font_montserrat_14, 0);
 
     btnMinus = lv_button_create(lv_screen_active());
     lv_obj_align(btnMinus, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
@@ -137,4 +140,15 @@ void create_gui(void) {
     lv_label_set_text(btn_label2, "+");
     lv_obj_set_style_text_font(btn_label2, &lv_font_montserrat_48, 0);
     lv_obj_align(btn_label2, LV_ALIGN_CENTER, 0, 0);
+
+    btnFollowLocation = lv_button_create(lv_screen_active());
+    lv_obj_align(btnFollowLocation, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_size(btnFollowLocation, 40, 39);
+    lv_obj_add_event_cb(btnFollowLocation, btnFollowLocation_event_cb, LV_EVENT_ALL, NULL);
+
+    static lv_obj_t* btn_label3;
+    btn_label3 = lv_label_create(btnFollowLocation);
+    lv_label_set_text(btn_label3, "o");
+    lv_obj_set_style_text_font(btn_label3, &lv_font_montserrat_48, 0);
+    lv_obj_align(btn_label3, LV_ALIGN_CENTER, 0, -4);
 }
