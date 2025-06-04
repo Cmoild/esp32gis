@@ -18,8 +18,8 @@ extern "C" {
 #define MAP_CENTER_Y (MAP_HEIGHT / 2)
 #define TILE_WIDTH 256
 #define TILE_HEIGHT 256
-#define MIN_ZOOM 10
-#define MAX_ZOOM 16
+#define MIN_ZOOM 2
+#define MAX_ZOOM 18
 
 
 typedef struct vec2 {

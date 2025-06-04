@@ -49,7 +49,7 @@ uint8_t* getFileContent(const char* filePath) {
     FILE* fp = fopen(filePath, "rb");
     if (!fp) {
         ESP_LOGE("map", "FAILED TO LOAD FILE");
-        uint8_t* failed = (uint8_t*)malloc(65536);
+        uint8_t* failed = (uint8_t*)calloc(65536, 1);
         return failed;
     }
     fseek(fp, 0, SEEK_END);

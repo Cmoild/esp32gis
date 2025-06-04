@@ -219,8 +219,10 @@ static void manual_tp_handling(xpt2046 panel, esp_ili9341* device) {
             }
             if (touchpad_x[0] > 200 && touchpad_y[0] > 280) {
                 lv_obj_send_event(btnFollowLocation, LV_EVENT_ALL, NULL);
-                cur_lat = g_gps_data.lat;
-                cur_lon = g_gps_data.lon;
+                if (g_gps_data.is_valid) {
+                    cur_lat = g_gps_data.lat;
+                    cur_lon = g_gps_data.lon;
+                }
                 map_changed = true;
             }
             // Map pressed
